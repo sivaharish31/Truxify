@@ -1273,6 +1273,32 @@ describe("TruxifyEscrow", function () {
       ).to.be.revertedWithCustomError(escrow, "OwnableUnauthorizedAccount")
        .withArgs(attacker.address);
     });
+
+    it("routes funds to driver when trip was started before dispute timeout", async function () {
+      const { escrow, owner, customer, driver } = await loadFixture(deployEscrowFixture);
+
+      const bookingId = 5;
+      const amount = ethers.parseEther("1.0");
+      await escrow.connect(customer).createBooking(bookingId, driver.address, await signCreateCommitment(escrow, customer.address, bookingId, driver.address, amount), { value: amount });
+
+      await escrow.connect(owner).markBookingStarted(bookingId);
+      await escrow.connect(owner).raiseDispute(bookingId);
+
+      await hre.network.provider.send("evm_increaseTime", [8 * 24 * 60 * 60]);
+      await hre.network.provider.send("evm_mine");
+
+      await expect(escrow.connect(owner).resolveDisputeTimeout(bookingId))
+        .to.emit(escrow, "DisputeSettled")
+        .withArgs(bookingId, driver.address, amount);
+
+      expect(await escrow.pendingWithdrawals(driver.address)).to.equal(amount);
+      expect(await escrow.pendingWithdrawals(customer.address)).to.equal(0);
+
+      const booking = await escrow.getBooking(bookingId);
+      expect(booking.status).to.equal(2); // Cancelled
+      expect(booking.paid).to.be.true;
+      expect(booking.amount).to.equal(0);
+    });
   });
 
   // ─── resolveDispute ──────────────────────────────────────────────────────
